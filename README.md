@@ -1,6 +1,6 @@
 # KuroCodex CLI AI Agent
 
-> Encrypted · Modular · Multi-Provider · by Zenithx
+> Encrypted · Modular · Multi-Provider · by Zyvora
 
 ```
   ██╗  ██╗██╗   ██╗██████╗  ██████╗  ██████╗ ██████╗ ██████╗ ███████╗██╗  ██╗
