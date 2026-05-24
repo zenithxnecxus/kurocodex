@@ -3,7 +3,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import readline from 'readline';
 import { loadConfig, setConfigValue } from '../utils/crypto.js';
-import { log } from '../utils/logger.js';
+import { log, expandPath } from '../utils/logger.js';
 import chalk from 'chalk';
 
 async function confirm(question) {
@@ -30,7 +30,7 @@ export async function cmdRead(filePath) {
     setConfigValue('allow_file_read', true);
   }
 
-  const abs = path.resolve(filePath);
+  const abs = path.resolve(expandPath(filePath));
 
   // Basic path safety
   const dangerous = ['/etc/shadow', '/etc/passwd', '/proc', '/sys'];
