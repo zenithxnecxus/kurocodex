@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { log } from '../utils/logger.js';
+import { log, expandPath } from '../utils/logger.js';
 import { loadConfig } from '../utils/crypto.js';
 import chalk from 'chalk';
 
@@ -158,7 +158,7 @@ export async function cmdDebug(targetPath) {
     return;
   }
 
-  const abs = path.resolve(targetPath);
+  const abs = path.resolve(expandPath(targetPath));
 
   if (!fs.existsSync(abs)) {
     log.error(`Tidak ditemukan: ${abs}`);
@@ -211,7 +211,7 @@ export async function cmdFeature(args) {
     return;
   }
 
-  const abs = path.resolve(targetPath);
+  const abs = path.resolve(expandPath(targetPath));
 
   if (!fs.existsSync(abs)) {
     log.error(`Tidak ditemukan: ${abs}`);
