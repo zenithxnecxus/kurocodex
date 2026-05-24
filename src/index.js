@@ -17,7 +17,6 @@ import { createSpinner } from './utils/spinner.js';
 import { showHelp }                            from './commands/help.js';
 import { cmdProvider, cmdSetKey, cmdStatus }   from './commands/provider.js';
 import { cmdRead, cmdExec }                    from './commands/read.js';
-import { cmdWhois, cmdDns, cmdPort, cmdSearch } from './commands/network.js';
 import { cmdRun }                              from './commands/runner.js';
 import { cmdDebug, cmdFeature }                from './commands/ai_tools.js';
 
@@ -174,13 +173,6 @@ async function handleCommand(input) {
         break;
       case 'read':    await cmdRead(args);   break;
       case 'exec':    await cmdExec(args);   break;
-      case 'whois':   await cmdWhois(args);  break;
-      case 'dns':     await cmdDns(args);    break;
-      case 'port': {
-        const [host, range] = rest;
-        await cmdPort(host, range);
-        break;
-      }
       case 'search':  cmdSearch(args); break;
       case 'run':     await cmdRun(args);    break;
       case 'debug':   await cmdDebug(args);  break;
