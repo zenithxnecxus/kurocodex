@@ -1,20 +1,20 @@
 import fs from 'fs';
 import path from 'path';
 import { execSync, spawn } from 'child_process';
-import { log } from '../utils/logger.js';
+import { log, expandPath } from '../utils/logger.js';
 import chalk from 'chalk';
 import archiver from 'archiver';
 import os from 'os';
 
-// ─── Language → Runner map ───────────────────────────────────────────────────
+
 
 const LANG_MAP = {
-  // JavaScript / TypeScript
   '.js':    { runner: 'node',           args: f => [f] },
   '.mjs':   { runner: 'node',           args: f => [f] },
   '.cjs':   { runner: 'node',           args: f => [f] },
   '.ts':    { runner: 'npx',            args: f => ['ts-node', f] },
   '.tsx':   { runner: 'npx',            args: f => ['ts-node', f] },
+  '.jsx':   { runner: 'node',           args: f => ['--input-type=module', f] },
   // Python
   '.py':    { runner: 'python3',        args: f => [f] },
   '.py2':   { runner: 'python2',        args: f => [f] },
@@ -113,6 +113,42 @@ const PROJECT_RUNNERS = [
   { check: d => fs.existsSync(path.join(d, 'docker-compose.yml')),
     run: d => ({ cmd: 'docker compose up', shell: true }), label: 'Docker Compose' },
 ];
+
+
+// ─── Auto-host detection ─────────────────────────────────────────────────────
+
+const WEB_SCRIPTS = ['dev', 'start', 'serve', 'preview'];
+
+function detectWebProject(dir) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    const scripts = pkg.scripts || {};
+    return WEB_SCRIPTS.some(s => scripts[s]);
+  } catch {}
+  return false;
+}
+
+function watchForPort(child) {
+  let announced = false;
+  const portRe  = /(?:localhost|127\.0\.0\.1):(\d+)|(?:port|PORT)[:\s]+(\d+)|(?:listening|running|started)[^\d]*(\d{4,5})/i;
+
+  function tryAnnounce(text) {
+    if (announced) return;
+    const m = portRe.exec(text);
+    if (m) {
+      const port = m[1] || m[2] || m[3];
+      if (port) {
+        announced = true;
+        console.log('');
+        console.log(`  ${chalk.green('◆')} ${chalk.bold.cyan('http://localhost:' + port)}  ${chalk.dim('← auto-detected')}`);
+        console.log('');
+      }
+    }
+  }
+
+  child.stdout?.on('data', d => tryAnnounce(d.toString()));
+  child.stderr?.on('data', d => tryAnnounce(d.toString()));
+}
 
 // ─── Auto zip if many files ──────────────────────────────────────────────────
 
@@ -222,6 +258,7 @@ async function runProcess(runner, args) {
   return new Promise((resolve) => {
     const child = spawn(runner, args, { stdio: ['inherit', 'pipe', 'pipe'] });
 
+    watchForPort(child);
     child.stdout.on('data', d => process.stdout.write(chalk.white('  ' + d.toString())));
     child.stderr.on('data', d => process.stderr.write(chalk.red('  ' + d.toString())));
 
@@ -244,6 +281,7 @@ async function runShell(cmd) {
   return new Promise((resolve) => {
     const child = spawn('sh', ['-c', cmd], { stdio: ['inherit', 'pipe', 'pipe'] });
 
+    watchForPort(child);
     child.stdout.on('data', d => process.stdout.write(chalk.white('  ' + d.toString())));
     child.stderr.on('data', d => process.stderr.write(chalk.yellow('  ' + d.toString())));
 
@@ -261,7 +299,7 @@ async function runShell(cmd) {
   });
 }
 
-// ─── Exported command ─────────────────────────────────────────────────────────
+
 
 export async function cmdRun(targetPath) {
   if (!targetPath) {
@@ -270,7 +308,7 @@ export async function cmdRun(targetPath) {
     return;
   }
 
-  const abs = path.resolve(targetPath);
+  const abs = path.resolve(expandPath(targetPath));
 
   if (!fs.existsSync(abs)) {
     log.error(`Tidak ditemukan: ${abs}`);
