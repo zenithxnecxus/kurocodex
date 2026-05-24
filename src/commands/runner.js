@@ -6,9 +6,10 @@ import chalk from 'chalk';
 import archiver from 'archiver';
 import os from 'os';
 
-
+// ─── Language → Runner map ───────────────────────────────────────────────────
 
 const LANG_MAP = {
+  // JavaScript / TypeScript
   '.js':    { runner: 'node',           args: f => [f] },
   '.mjs':   { runner: 'node',           args: f => [f] },
   '.cjs':   { runner: 'node',           args: f => [f] },
@@ -299,7 +300,7 @@ async function runShell(cmd) {
   });
 }
 
-
+// ─── Exported command ─────────────────────────────────────────────────────────
 
 export async function cmdRun(targetPath) {
   if (!targetPath) {
