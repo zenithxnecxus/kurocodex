@@ -18,7 +18,6 @@ import { createSpinner } from './utils/spinner.js';
 import { showHelp }                            from './commands/help.js';
 import { cmdProvider, cmdSetKey, cmdStatus }   from './commands/provider.js';
 import { cmdRead, cmdExec }                    from './commands/read.js';
-import { cmdWhois, cmdDns, cmdPort, cmdSearch } from './commands/network.js';
 import { cmdRun }                              from './commands/runner.js';
 import { cmdDebug, cmdFeature }                from './commands/ai_tools.js';
 
@@ -162,22 +161,23 @@ async function autoRunCode(text) {
 
   // If more than 1 file, auto-zip them too
   if (tmpFiles.length > 1) {
-    const zipName = `kuro_output_${Date.now()}.zip`;
-    const zipPath = path.join(tmpdir(), zipName);
-    await new Promise((resolve, reject) => {
+    try {
+      const zipName = `kuro_output_${Date.now()}.zip`;
+      const zipPath = path.join(tmpdir(), zipName);
       const { default: archiver } = await import('archiver');
-      const output  = fs.createWriteStream(zipPath);
-      const archive = archiver('zip', { zlib: { level: 9 } });
-      output.on('close', resolve);
-      archive.on('error', reject);
-      archive.pipe(output);
-      for (const f of tmpFiles) archive.file(f, { name: path.basename(f) });
-      archive.finalize();
-    }).catch(() => null); // non-fatal if archiver unavailable
-
-    if (fs.existsSync(zipPath)) {
+      await new Promise((resolve, reject) => {
+        const output  = fs.createWriteStream(zipPath);
+        const archive = archiver('zip', { zlib: { level: 9 } });
+        output.on('close', resolve);
+        archive.on('error', reject);
+        archive.pipe(output);
+        for (const f of tmpFiles) archive.file(f, { name: path.basename(f) });
+        archive.finalize();
+      });
       const sizeMB = (fs.statSync(zipPath).size / 1024 / 1024).toFixed(2);
       log.success(`ZIP dibuat: ${chalk.cyan(zipPath)} (${sizeMB} MB)`);
+    } catch (e) {
+      log.warn(`Auto-zip gagal: ${e.message}`);
     }
   }
 
@@ -250,14 +250,6 @@ async function handleCommand(input) {
         break;
       case 'read':    await cmdRead(args);   break;
       case 'exec':    await cmdExec(args);   break;
-      case 'whois':   await cmdWhois(args);  break;
-      case 'dns':     await cmdDns(args);    break;
-      case 'port': {
-        const [host, range] = rest;
-        await cmdPort(host, range);
-        break;
-      }
-      case 'search':  cmdSearch(args); break;
       case 'run':     await cmdRun(args);    break;
       case 'debug':   await cmdDebug(args);  break;
       case 'feature': await cmdFeature(trimmed.slice('/feature '.length)); break;
