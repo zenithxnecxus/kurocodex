@@ -13,6 +13,7 @@ import { geminiChat }   from './services/gemini.js';
 import { claudeChat }   from './services/claude.js';
 import { copilotChat }  from './services/copilot.js';
 
+import { createSpinner } from './utils/spinner.js';
 import { showHelp }                            from './commands/help.js';
 import { cmdProvider, cmdSetKey, cmdStatus }   from './commands/provider.js';
 import { cmdRead, cmdExec }                    from './commands/read.js';
@@ -91,7 +92,10 @@ async function aiChatWithAutoContinue(prompt) {
   let continueCount = 0;
 
   // Initial call
+  const spinner = createSpinner('Thinking ...');
+  spinner.start();
   const result = await callAI(prompt);
+  spinner.stop();
   fullText += result.answer || '';
   printAIResponse(result);
 
@@ -101,7 +105,10 @@ async function aiChatWithAutoContinue(prompt) {
     log.dim(`\n  ↻ Respons belum selesai, melanjutkan (${continueCount}/${MAX_CONTINUES}) ...`);
 
     const contPrompt = 'Lanjutkan dari tempat kamu berhenti. Jangan ulangi yang sudah ada.';
+    const spinner2 = createSpinner('Continuing ...');
+    spinner2.start();
     const contResult = await callAI(contPrompt);
+    spinner2.stop();
     const cont       = contResult.answer || '';
 
     if (!cont.trim()) break;
@@ -168,12 +175,6 @@ async function handleCommand(input) {
       case 'read':    await cmdRead(args);   break;
       case 'exec':    await cmdExec(args);   break;
       case 'whois':   await cmdWhois(args);  break;
-      case 'dns':     await cmdDns(args);    break;
-      case 'port': {
-        const [host, range] = rest;
-        await cmdPort(host, range);
-        break;
-      }
       case 'search':  cmdSearch(args); break;
       case 'run':     await cmdRun(args);    break;
       case 'debug':   await cmdDebug(args);  break;
@@ -191,7 +192,7 @@ async function handleCommand(input) {
   try {
     const config   = loadConfig();
     const provider = config.default_provider || 'deepseek';
-    process.stdout.write(`\n  ${chalk.magenta('◈')} ${chalk.dim(`[${provider}]`)} `);
+    console.log(`\n  ${chalk.magenta('◈')} ${chalk.dim('[' + provider + ']')}`);
     await aiChatWithAutoContinue(trimmed);
   } catch (e) {
     log.error(`AI error: ${e.message}`);
