@@ -1,6 +1,7 @@
 import readline from 'readline';
 import chalk from 'chalk';
 import fs from 'fs';
+import { tmpdir } from 'os';
 import path from 'path';
 import { homedir } from 'os';
 
@@ -17,6 +18,7 @@ import { createSpinner } from './utils/spinner.js';
 import { showHelp }                            from './commands/help.js';
 import { cmdProvider, cmdSetKey, cmdStatus }   from './commands/provider.js';
 import { cmdRead, cmdExec }                    from './commands/read.js';
+import { cmdWhois, cmdDns, cmdPort, cmdSearch } from './commands/network.js';
 import { cmdRun }                              from './commands/runner.js';
 import { cmdDebug, cmdFeature }                from './commands/ai_tools.js';
 
@@ -97,6 +99,7 @@ async function aiChatWithAutoContinue(prompt) {
   spinner.stop();
   fullText += result.answer || '';
   printAIResponse(result);
+  await autoRunCode(result.answer || '');
 
   // Auto-continue loop
   while (continueCount < MAX_CONTINUES && isCutOff(fullText)) {
@@ -116,6 +119,80 @@ async function aiChatWithAutoContinue(prompt) {
   }
 
   console.log('');
+}
+
+
+// ─── Auto-run code blocks from AI response ───────────────────────────────────
+
+
+const EXT_MAP = {
+  javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts',
+  jsx: 'jsx', tsx: 'tsx',
+  python: 'py', py: 'py',
+  bash: 'sh', sh: 'sh', shell: 'sh',
+  ruby: 'rb', rb: 'rb',
+  go: 'go', rust: 'rs', java: 'java',
+  php: 'php', lua: 'lua', perl: 'pl',
+  html: 'html', css: 'css',
+};
+
+async function autoRunCode(text) {
+  // Extract all fenced code blocks with a language tag
+  const RE = /```([a-zA-Z0-9_+-]+)\n([\s\S]*?)```/g;
+  let m;
+  const blocks = [];
+  while ((m = RE.exec(text)) !== null) {
+    const lang = m[1].toLowerCase();
+    const code = m[2];
+    const ext  = EXT_MAP[lang];
+    if (ext) blocks.push({ lang, ext, code });
+  }
+  if (blocks.length === 0) return;
+
+  console.log('');
+
+  // Write all blocks to temp files first
+  const tmpFiles = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const { ext, code } = blocks[i];
+    const tmpFile = path.join(tmpdir(), `kuro_auto_${Date.now()}_${i}.${ext}`);
+    fs.writeFileSync(tmpFile, code);
+    tmpFiles.push(tmpFile);
+  }
+
+  // If more than 1 file, auto-zip them too
+  if (tmpFiles.length > 1) {
+    const zipName = `kuro_output_${Date.now()}.zip`;
+    const zipPath = path.join(tmpdir(), zipName);
+    await new Promise((resolve, reject) => {
+      const { default: archiver } = await import('archiver');
+      const output  = fs.createWriteStream(zipPath);
+      const archive = archiver('zip', { zlib: { level: 9 } });
+      output.on('close', resolve);
+      archive.on('error', reject);
+      archive.pipe(output);
+      for (const f of tmpFiles) archive.file(f, { name: path.basename(f) });
+      archive.finalize();
+    }).catch(() => null); // non-fatal if archiver unavailable
+
+    if (fs.existsSync(zipPath)) {
+      const sizeMB = (fs.statSync(zipPath).size / 1024 / 1024).toFixed(2);
+      log.success(`ZIP dibuat: ${chalk.cyan(zipPath)} (${sizeMB} MB)`);
+    }
+  }
+
+  // Run each file
+  log.dim(`Ditemukan ${blocks.length} code block — auto-run...`);
+  for (let i = 0; i < blocks.length; i++) {
+    const { lang } = blocks[i];
+    const tmpFile  = tmpFiles[i];
+    log.info(`Menjalankan ${chalk.cyan(`[${lang}]`)} → ${chalk.dim(tmpFile)}`);
+    try {
+      await cmdRun(tmpFile);
+    } catch (e) {
+      log.error(`Gagal run: ${e.message}`);
+    }
+  }
 }
 
 function printAIResponse(result, isContinuation = false) {
@@ -173,6 +250,13 @@ async function handleCommand(input) {
         break;
       case 'read':    await cmdRead(args);   break;
       case 'exec':    await cmdExec(args);   break;
+      case 'whois':   await cmdWhois(args);  break;
+      case 'dns':     await cmdDns(args);    break;
+      case 'port': {
+        const [host, range] = rest;
+        await cmdPort(host, range);
+        break;
+      }
       case 'search':  cmdSearch(args); break;
       case 'run':     await cmdRun(args);    break;
       case 'debug':   await cmdDebug(args);  break;
