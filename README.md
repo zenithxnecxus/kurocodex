@@ -33,7 +33,6 @@ kurocodex
 
 | Kategori       | Fitur                                                |
 |----------------|------------------------------------------------------|
-| 🔐 Security    | AES-256-GCM encryption, auto-generate secret key    |
 | 🤖 AI          | DeepSeek, Claude, Gemini, Copilot                   |
 | 🌐 Web         | Scrape (links, images, email, phone), BFS Crawl     |
 | 📁 File/Exec   | Read file, execute command (dengan konfirmasi)       |
@@ -54,24 +53,14 @@ kurocodex
 /read <file>           Baca file lokal
 /exec <cmd>            Jalankan shell command
 
-/whois <domain>        Whois lookup
-/dns <domain>          DNS lookup
-/port <host> [range]   Port scan
-/search <type>         Google dork (sqli/xss/lfi/admin/config)
 
 /save <name>           Simpan session
 /load <name>           Load session
 exit                   Keluar
 ```
 
-## Security
-
-- Semua config & API key dienkripsi dengan **AES-256-GCM**
-- Config tersimpan di `~/.kurocodex/config.enc`
-- Secret key di `~/.kurocodex/.secret` (mode 600, owner-only)
-- Folder `~/.kurocodex` mode **700**
 
 ## Requirements
 
 - Node.js ≥ 18
-- `whois` (untuk /whois): `apt install whois`
+
