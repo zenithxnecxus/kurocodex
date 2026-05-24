@@ -1,3 +1,16 @@
+import path from 'path';
+import os from 'os';
+
+export function expandPath(p) {
+  if (!p) return p;
+  // Expand ~ and ~/...
+  if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
+    p = os.homedir() + p.slice(1);
+  }
+  p = p.replace(/\$\{([^}]+)\}/g, (_, v) => process.env[v] ?? '');
+  p = p.replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, v) => process.env[v] ?? '');
+  return p;
+}
 import chalk from 'chalk';
 
 const ts = () => chalk.gray(new Date().toLocaleTimeString('id-ID', { hour12: false }));
