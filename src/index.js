@@ -17,6 +17,7 @@ import { createSpinner } from './utils/spinner.js';
 import { showHelp }                            from './commands/help.js';
 import { cmdProvider, cmdSetKey, cmdStatus }   from './commands/provider.js';
 import { cmdRead, cmdExec }                    from './commands/read.js';
+import { cmdWhois, cmdDns, cmdPort, cmdSearch } from './commands/network.js';
 import { cmdRun }                              from './commands/runner.js';
 import { cmdDebug, cmdFeature }                from './commands/ai_tools.js';
 
@@ -174,11 +175,20 @@ async function handleCommand(input) {
       case 'read':    await cmdRead(args);   break;
       case 'exec':    await cmdExec(args);   break;
       case 'whois':   await cmdWhois(args);  break;
+      case 'dns':     await cmdDns(args);    break;
+      case 'port': {
+        const [host, range] = rest;
+        await cmdPort(host, range);
+        break;
+      }
       case 'search':  cmdSearch(args); break;
       case 'run':     await cmdRun(args);    break;
       case 'debug':   await cmdDebug(args);  break;
       case 'feature': await cmdFeature(trimmed.slice('/feature '.length)); break;
       case 'test':    await cmdTest(args);   break;
+      case 'ml':
+        console.log('  ' + chalk.dim('Ketik /ml dulu di prompt utama untuk masuk multiline mode.'));
+        break;
       case 'save':    saveSession(args || 'default'); break;
       case 'load':    loadSession(args || 'default'); break;
       default:
@@ -203,25 +213,104 @@ async function handleCommand(input) {
 export async function startREPL() {
   printBanner();
 
-  const rl = readline.createInterface({
-    input:  process.stdin,
-    output: process.stdout,
-    prompt: chalk.dim('  ~/kurocodex ') + chalk.cyan('❯ '),
-    historySize: 100,
-  });
+  const PROMPT = chalk.dim('  ~/kurocodex ') + chalk.cyan('❯ ') + ' ';
 
-  rl.prompt();
+  // ── Raw stdin: auto-detect paste vs single Enter ──────────────────────────
+  process.stdin.setRawMode(true);
+  process.stdin.setEncoding('utf8');
 
-  rl.on('line', async line => {
-    rl.pause();
-    await handleCommand(line);
-    rl.resume();
-    rl.prompt();
-  });
+  let lineBuffer  = '';   // chars typed so far
+  let pasteChunks = [];   // lines collected during a paste burst
+  let pasteTimer  = null; // fires after paste burst ends
+  let busy        = false;
 
-  rl.on('close', () => {
-    log.info(chalk.cyan('Sampai jumpa! 👋'));
-    process.exit(0);
+  const PASTE_FLUSH_MS = 80; // gap after last chunk before we fire
+
+  function showPrompt() {
+    process.stdout.write('\r' + PROMPT);
+  }
+
+  function clearLine() {
+    process.stdout.write('\r\x1b[2K');
+  }
+
+  async function dispatch(input) {
+    const text = input.trim();
+    if (!text) { showPrompt(); return; }
+    busy = true;
+    clearLine();
+    await handleCommand(text);
+    busy = false;
+    showPrompt();
+  }
+
+  function flushPaste() {
+    pasteTimer = null;
+    // Add whatever is still in lineBuffer as the last line
+    if (lineBuffer) {
+      pasteChunks.push(lineBuffer);
+      lineBuffer = '';
+    }
+    const full = pasteChunks.join('\n');
+    pasteChunks = [];
+    dispatch(full);
+  }
+
+  showPrompt();
+
+  process.stdin.on('data', chunk => {
+    // Ctrl+C / Ctrl+D
+    if (chunk === '\u0003') { console.log(''); log.info(chalk.cyan('Sampai jumpa! 👋')); process.exit(0); }
+    if (chunk === '\u0004') { console.log(''); process.exit(0); }
+
+    // Backspace
+    if (chunk === '\u007f' || chunk === '\b') {
+      if (lineBuffer.length > 0) {
+        lineBuffer = lineBuffer.slice(0, -1);
+        process.stdout.write('\b \b');
+      }
+      return;
+    }
+
+    // If chunk contains newlines it's almost certainly a paste
+    const hasNewline = chunk.includes('\n') || chunk.includes('\r');
+    const lines = chunk.split(/\r?\n/);
+
+    if (lines.length > 1 || (pasteTimer && hasNewline)) {
+      // Paste burst: collect all lines
+      if (pasteTimer) clearTimeout(pasteTimer);
+
+      // First segment appends to whatever was in lineBuffer
+      lines[0] = lineBuffer + lines[0];
+      lineBuffer = '';
+
+      // All but last are complete lines; last may be partial
+      const complete = lines.slice(0, -1);
+      const tail     = lines[lines.length - 1];
+
+      pasteChunks.push(...complete);
+      lineBuffer = tail;
+
+      // Echo nicely
+      clearLine();
+      process.stdout.write(chalk.dim('  [paste] ') + chalk.cyan(String(pasteChunks.length + (tail ? 1 : 0)) + ' baris...'));
+
+      pasteTimer = setTimeout(flushPaste, PASTE_FLUSH_MS);
+      return;
+    }
+
+    // Single char / Enter
+    if (chunk === '\r' || chunk === '\n') {
+      process.stdout.write('\n');
+      const line = lineBuffer;
+      lineBuffer  = '';
+      dispatch(line);
+      return;
+    }
+
+    // Printable char — echo it
+    lineBuffer += chunk;
+    process.stdout.write(chunk);
   });
 }
 
