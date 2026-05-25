@@ -1,12 +1,14 @@
 import path from 'path';
 import os from 'os';
 
+// Expand $VAR, ${VAR}, ~ in paths — same as shell would
 export function expandPath(p) {
   if (!p) return p;
   // Expand ~ and ~/...
   if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
     p = os.homedir() + p.slice(1);
   }
+  // Expand $VAR and ${VAR}
   p = p.replace(/\$\{([^}]+)\}/g, (_, v) => process.env[v] ?? '');
   p = p.replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, v) => process.env[v] ?? '');
   return p;
