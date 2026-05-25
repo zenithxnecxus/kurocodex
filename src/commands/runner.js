@@ -9,71 +9,48 @@ import os from 'os';
 // ─── Language → Runner map ───────────────────────────────────────────────────
 
 const LANG_MAP = {
-  // JavaScript / TypeScript
   '.js':    { runner: 'node',           args: f => [f] },
   '.mjs':   { runner: 'node',           args: f => [f] },
   '.cjs':   { runner: 'node',           args: f => [f] },
   '.ts':    { runner: 'npx',            args: f => ['ts-node', f] },
   '.tsx':   { runner: 'npx',            args: f => ['ts-node', f] },
   '.jsx':   { runner: 'node',           args: f => ['--input-type=module', f] },
-  // Python
   '.py':    { runner: 'python3',        args: f => [f] },
   '.py2':   { runner: 'python2',        args: f => [f] },
-  // Go
   '.go':    { runner: 'go',             args: f => ['run', f] },
-  // Rust
   '.rs':    { runner: null,             compile: f => `rustc ${f} -o /tmp/kuro_rs_out && /tmp/kuro_rs_out`, shell: true },
-  // Ruby
   '.rb':    { runner: 'ruby',           args: f => [f] },
-  // PHP
   '.php':   { runner: 'php',            args: f => [f] },
-  // Java
   '.java':  { runner: null,             compile: f => {
     const cls = path.basename(f, '.java');
     const dir = path.dirname(f);
     return `javac ${f} && java -cp ${dir} ${cls}`;
   }, shell: true },
-  // C
   '.c':     { runner: null,             compile: f => `gcc ${f} -o /tmp/kuro_c_out && /tmp/kuro_c_out`, shell: true },
-  // C++
   '.cpp':   { runner: null,             compile: f => `g++ ${f} -o /tmp/kuro_cpp_out && /tmp/kuro_cpp_out`, shell: true },
   '.cc':    { runner: null,             compile: f => `g++ ${f} -o /tmp/kuro_cc_out && /tmp/kuro_cc_out`, shell: true },
-  // Shell
   '.sh':    { runner: 'bash',           args: f => [f] },
   '.zsh':   { runner: 'zsh',            args: f => [f] },
   '.fish':  { runner: 'fish',           args: f => [f] },
-  // Perl
   '.pl':    { runner: 'perl',           args: f => [f] },
-  // Lua
   '.lua':   { runner: 'lua',            args: f => [f] },
-  // Elixir
   '.ex':    { runner: 'elixir',         args: f => [f] },
   '.exs':   { runner: 'elixir',         args: f => [f] },
-  // Kotlin
   '.kts':   { runner: 'kotlinc',        args: f => ['-script', f] },
-  // Swift (Linux)
   '.swift': { runner: 'swift',          args: f => [f] },
-  // Dart
   '.dart':  { runner: 'dart',           args: f => ['run', f] },
-  // R
   '.r':     { runner: 'Rscript',        args: f => [f] },
   '.R':     { runner: 'Rscript',        args: f => [f] },
-  // Haskell
   '.hs':    { runner: 'runghc',         args: f => [f] },
-  // Scala
   '.scala': { runner: 'scala',          args: f => [f] },
-  // Groovy
   '.groovy':{ runner: 'groovy',         args: f => [f] },
-  // PowerShell
   '.ps1':   { runner: 'pwsh',           args: f => ['-File', f] },
-  // Batch / Makefile / etc
   '.bat':   { runner: 'cmd.exe',        args: f => ['/c', f] },
 };
 
-// ─── Project entry-point detection ──────────────────────────────────────────
+
 
 const PROJECT_RUNNERS = [
-  // Node.js
   { check: d => fs.existsSync(path.join(d, 'package.json')),
     run: d => {
       const pkg = JSON.parse(fs.readFileSync(path.join(d, 'package.json'), 'utf8'));
@@ -115,8 +92,6 @@ const PROJECT_RUNNERS = [
     run: d => ({ cmd: 'docker compose up', shell: true }), label: 'Docker Compose' },
 ];
 
-
-// ─── Auto-host detection ─────────────────────────────────────────────────────
 
 const WEB_SCRIPTS = ['dev', 'start', 'serve', 'preview'];
 
