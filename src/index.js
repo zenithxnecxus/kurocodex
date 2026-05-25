@@ -61,13 +61,12 @@ async function callAI(prompt) {
   return result;
 }
 
-// ─── Auto-continue check ─────────────────────────────────────────────────────
+// ─── Helper: detect if response is cut off ───────────────────────────────────
 
 function isCutOff(text) {
   const trimmed = text.trim();
   if (!trimmed) return false;
 
-  const lastChar = trimmed[trimmed.length - 1];
   const lastLine = trimmed.split('\n').pop().trim();
 
   // Open code block
@@ -84,177 +83,7 @@ function isCutOff(text) {
   return false;
 }
 
-// ─── AI chat with auto-continue ──────────────────────────────────────────────
-
-async function aiChatWithAutoContinue(prompt) {
-  const MAX_CONTINUES = 5;
-  let fullText    = '';
-  let continueCount = 0;
-
-  // Initial call
-  const spinner = createSpinner('Thinking ...');
-  spinner.start();
-  const result = await callAI(prompt);
-  spinner.stop();
-  fullText += result.answer || '';
-  printAIResponse(result);
-  await autoRunCode(result.answer || '');
-
-  // Auto-continue loop
-  while (continueCount < MAX_CONTINUES && isCutOff(fullText)) {
-    continueCount++;
-    log.dim(`\n  ↻ Respons belum selesai, melanjutkan (${continueCount}/${MAX_CONTINUES}) ...`);
-
-    const contPrompt = 'Lanjutkan dari tempat kamu berhenti. Jangan ulangi yang sudah ada.';
-    const spinner2 = createSpinner('Continuing ...');
-    spinner2.start();
-    const contResult = await callAI(contPrompt);
-    spinner2.stop();
-    const cont       = contResult.answer || '';
-
-    if (!cont.trim()) break;
-    fullText += '\n' + cont;
-    printAIResponse(contResult, true);
-  }
-
-  console.log('');
-}
-
-
-// ─── Auto-run code blocks from AI response ───────────────────────────────────
-
-
-const EXT_MAP = {
-  javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts',
-  jsx: 'jsx', tsx: 'tsx',
-  python: 'py', py: 'py',
-  bash: 'sh', sh: 'sh', shell: 'sh',
-  ruby: 'rb', rb: 'rb',
-  go: 'go', rust: 'rs', java: 'java',
-  php: 'php', lua: 'lua', perl: 'pl',
-  html: 'html', css: 'css',
-};
-
-// Entry point priority for multi-file projects
-const ENTRY_PRIORITY = [
-  'index.js','index.ts','index.jsx','index.tsx',
-  'main.js','main.ts','main.py','app.js','app.ts',
-  'server.js','server.ts','index.html',
-];
-
-// Langs that likely spawn a web server
-const WEB_LANGS = new Set(['js','ts','jsx','tsx','py','rb','php','go','rs']);
-
-function pickEntryFile(tmpFiles, blocks) {
-  // Prefer file whose name matches ENTRY_PRIORITY
-  for (const entry of ENTRY_PRIORITY) {
-    const idx = tmpFiles.findIndex(f => path.basename(f).startsWith(entry.split('.')[0]));
-    if (idx !== -1) return { file: tmpFiles[idx], lang: blocks[idx].lang };
-  }
-  // Fallback: first runnable (non-css/html-only) file
-  for (let i = 0; i < blocks.length; i++) {
-    if (!['css'].includes(blocks[i].ext)) return { file: tmpFiles[i], lang: blocks[i].lang };
-  }
-  return { file: tmpFiles[0], lang: blocks[0].lang };
-}
-
-async function checkCodeWithAI(code, lang) {
-  const checkPrompt = `Cek kode ${lang} ini untuk syntax error atau runtime error yang jelas. Jika ada error, balas HANYA dengan kode yang sudah diperbaiki dalam satu code block. Jika tidak ada error, balas hanya: OK\n\n\`\`\`${lang}\n${code}\`\`\``;
-  const spinner = createSpinner('Checking code ...');
-  spinner.start();
-  const result = await callAI(checkPrompt);
-  spinner.stop();
-  return result.answer || '';
-}
-
-function extractFirstCode(text) {
-  const m = /```[a-zA-Z0-9_+-]*\n([\s\S]*?)```/.exec(text);
-  return m ? m[1] : null;
-}
-
-async function autoRunCode(text) {
-  const RE = /```([a-zA-Z0-9_+-]+)\n([\s\S]*?)```/g;
-  let m;
-  const blocks = [];
-  while ((m = RE.exec(text)) !== null) {
-    const lang = m[1].toLowerCase();
-    const code = m[2];
-    const ext  = EXT_MAP[lang];
-    if (ext) blocks.push({ lang, ext, code });
-  }
-  if (blocks.length === 0) return;
-
-  console.log('');
-
-  // ── Double-check each code block (max 2 rounds) ───────────────────────────
-  const checkedBlocks = [];
-  for (const block of blocks) {
-    let { lang, ext, code } = block;
-    for (let round = 1; round <= 2; round++) {
-      const reply = await checkCodeWithAI(code, lang);
-      if (reply.trim().startsWith('OK')) break; // no error
-      const fixed = extractFirstCode(reply);
-      if (!fixed) break;
-      log.warn(`  Round ${round}: error ditemukan, kode diperbaiki otomatis`);
-      code = fixed;
-      if (round === 2) log.dim('  Sudah 2x check, lanjut dengan kode terbaik.');
-    }
-    checkedBlocks.push({ lang, ext, code });
-  }
-
-  // ── Write files ───────────────────────────────────────────────────────────
-  const tmpFiles = [];
-  for (let i = 0; i < checkedBlocks.length; i++) {
-    const { ext, code } = checkedBlocks[i];
-    const tmpFile = path.join(tmpdir(), `kuro_auto_${Date.now()}_${i}.${ext}`);
-    fs.writeFileSync(tmpFile, code);
-    tmpFiles.push(tmpFile);
-  }
-
-  const isMultiFile = tmpFiles.length > 1;
-  const isWebProject = checkedBlocks.some(b => WEB_LANGS.has(b.ext));
-
-  // ── Zip if multi-file ─────────────────────────────────────────────────────
-  if (isMultiFile) {
-    try {
-      const zipName = `kuro_output_${Date.now()}.zip`;
-      const zipPath = path.join(tmpdir(), zipName);
-      const { default: archiver } = await import('archiver');
-      await new Promise((resolve, reject) => {
-        const output  = fs.createWriteStream(zipPath);
-        const archive = archiver('zip', { zlib: { level: 9 } });
-        output.on('close', resolve);
-        archive.on('error', reject);
-        archive.pipe(output);
-        for (const f of tmpFiles) archive.file(f, { name: path.basename(f) });
-        archive.finalize();
-      });
-      const sizeMB = (fs.statSync(zipPath).size / 1024 / 1024).toFixed(2);
-      log.success(`ZIP: ${chalk.cyan(zipPath)} (${sizeMB} MB)`);
-    } catch (e) {
-      log.warn(`Auto-zip gagal: ${e.message}`);
-    }
-  }
-
-  // ── Run only entry point for multi-file, all for single ──────────────────
-  if (isMultiFile) {
-    const { file, lang } = pickEntryFile(tmpFiles, checkedBlocks);
-    log.dim(`Multi-file project — run entry point: ${chalk.cyan(`[${lang}]`)}`);
-    try {
-      await cmdRun(file);
-    } catch (e) {
-      log.error(`Gagal run: ${e.message}`);
-    }
-  } else {
-    const { lang } = checkedBlocks[0];
-    log.dim(`Run ${chalk.cyan(`[${lang}]`)} ...`);
-    try {
-      await cmdRun(tmpFiles[0]);
-    } catch (e) {
-      log.error(`Gagal run: ${e.message}`);
-    }
-  }
-}
+// ─── Print AI response ───────────────────────────────────────────────────────
 
 function printAIResponse(result, isContinuation = false) {
   const text = result.answer || result.reasoning || '';
@@ -278,251 +107,7 @@ function printAIResponse(result, isContinuation = false) {
   }
 }
 
-// ─── Command parser ──────────────────────────────────────────────────────────
-
-async function handleCommand(input) {
-  const trimmed = input.trim();
-  if (!trimmed) return;
-
-  // exit
-  if (['exit', 'quit', 'bye'].includes(trimmed.toLowerCase())) {
-    log.info(chalk.cyan('Sampai jumpa! 👋'));
-    process.exit(0);
-  }
-
-  if (trimmed.startsWith('/')) {
-    const [cmd, ...rest] = trimmed.slice(1).split(' ');
-    const args = rest.join(' ');
-
-    switch (cmd.toLowerCase()) {
-      case 'help':    showHelp(); break;
-      case 'provider': cmdProvider(args); break;
-      case 'setkey': {
-        const [prov, key] = rest;
-        cmdSetKey(prov, key);
-        break;
-      }
-      case 'status': cmdStatus(); break;
-      case 'clear':
-        chatHistory = [];
-        console.clear();
-        printBanner();
-        log.success('History dihapus.');
-        break;
-      case 'read':    await cmdRead(args);   break;
-      case 'exec':    await cmdExec(args);   break;
-      case 'run':     await cmdRun(args);    break;
-      case 'debug':   await cmdDebug(args);  break;
-      case 'feature': await cmdFeature(trimmed.slice('/feature '.length)); break;
-      case 'test':    await cmdTest(args);   break;
-      case 'ml':
-        console.log('  ' + chalk.dim('Ketik /ml dulu di prompt utama untuk masuk multiline mode.'));
-        break;
-      case 'save':    saveSession(args || 'default'); break;
-      case 'load':    loadSession(args || 'default'); break;
-      default:
-        log.warn(`Perintah tidak dikenal: /${cmd}  — ketik /help`);
-    }
-    return;
-  }
-
-  // AI chat with auto-continue
-  try {
-    const config   = loadConfig();
-    const provider = config.default_provider || 'deepseek';
-    console.log(`\n  ${chalk.magenta('◈')} ${chalk.dim('[' + provider + ']')}`);
-    await aiChatWithAutoContinue(trimmed);
-  } catch (e) {
-    log.error(`AI error: ${e.message}`);
-  }
-}
-
-// ─── REPL ────────────────────────────────────────────────────────────────────
-
-export async function startREPL() {
-  printBanner();
-
-  const PROMPT = chalk.dim('  ~/kurocodex ') + chalk.cyan('❯ ') + ' ';
-
-  // ── Raw stdin: auto-detect paste vs single Enter ──────────────────────────
-  process.stdin.setRawMode(true);
-  process.stdin.setEncoding('utf8');
-
-  let lineBuffer  = '';   // chars typed so far
-  let pasteChunks = [];   // lines collected during a paste burst
-  let pasteTimer  = null; // fires after paste burst ends
-  let busy        = false;
-
-  const PASTE_FLUSH_MS = 80; // gap after last chunk before we fire
-
-  function showPrompt() {
-    process.stdout.write('\r' + PROMPT);
-  }
-
-  function clearLine() {
-    process.stdout.write('\r\x1b[2K');
-  }
-
-  async function dispatch(input) {
-    const text = input.trim();
-    if (!text) { showPrompt(); return; }
-    busy = true;
-    clearLine();
-    await handleCommand(text);
-    busy = false;
-    showPrompt();
-  }
-
-  function flushPaste() {
-    pasteTimer = null;
-    // Add whatever is still in lineBuffer as the last line
-    if (lineBuffer) {
-      pasteChunks.push(lineBuffer);
-      lineBuffer = '';
-    }
-    const full = pasteChunks.join('\n');
-    pasteChunks = [];
-    dispatch(full);
-  }
-
-  showPrompt();
-
-  process.stdin.on('data', chunk => {
-    // Ctrl+C / Ctrl+D
-    if (chunk === '\u0003') { console.log(''); log.info(chalk.cyan('Sampai jumpa! 👋')); process.exit(0); }
-    if (chunk === '\u0004') { console.log(''); process.exit(0); }
-
-    // Backspace
-    if (chunk === '\u007f' || chunk === '\b') {
-      if (lineBuffer.length > 0) {
-        lineBuffer = lineBuffer.slice(0, -1);
-        process.stdout.write('\b \b');
-      }
-      return;
-    }
-
-    // If chunk contains newlines it's almost certainly a paste
-    const hasNewline = chunk.includes('\n') || chunk.includes('\r');
-    const lines = chunk.split(/\r?\n/);
-
-    if (lines.length > 1 || (pasteTimer && hasNewline)) {
-      // Paste burst: collect all lines
-      if (pasteTimer) clearTimeout(pasteTimer);
-
-      // First segment appends to whatever was in lineBuffer
-      lines[0] = lineBuffer + lines[0];
-      lineBuffer = '';
-
-      // All but last are complete lines; last may be partial
-      const complete = lines.slice(0, -1);
-      const tail     = lines[lines.length - 1];
-
-      pasteChunks.push(...complete);
-      lineBuffer = tail;
-
-      // Echo nicely
-      clearLine();
-      process.stdout.write(chalk.dim('  [paste] ') + chalk.cyan(String(pasteChunks.length + (tail ? 1 : 0)) + ' baris...'));
-
-      pasteTimer = setTimeout(flushPaste, PASTE_FLUSH_MS);
-      return;
-    }
-
-    // Single char / Enter
-    if (chunk === '\r' || chunk === '\n') {
-      process.stdout.write('\n');
-      const line = lineBuffer;
-      lineBuffer  = '';
-      dispatch(line);
-      return;
-    }
-
-    // Printable char — echo it
-    lineBuffer += chunk;
-    process.stdout.write(chunk);
-  });
-}
-
-// ─── /test command ────────────────────────────────────────────────────────────
-async function cmdTest(providerArg) {
-  const { deepseekChat } = await import('./services/deepseek.js');
-  const { geminiChat }   = await import('./services/gemini.js');
-  const { claudeChat }   = await import('./services/claude.js');
-  const { copilotChat }  = await import('./services/copilot.js');
-
-  const all     = { deepseek: deepseekChat, gemini: geminiChat, claude: claudeChat, copilot: copilotChat };
-  const targets = providerArg && all[providerArg] ? { [providerArg]: all[providerArg] } : all;
-
-  console.log('');
-  for (const [name, fn] of Object.entries(targets)) {
-    process.stdout.write(`  ${chalk.dim('◈')} Testing ${chalk.cyan(name.padEnd(10))} ... `);
-    try {
-      const t      = Date.now();
-      const result = await fn('Reply with exactly: ok');
-      console.log(chalk.green('✔ OK') + chalk.dim(` ${Date.now()-t}ms [${result.model}]`));
-      console.log(`    ${chalk.dim(result.answer.slice(0, 100))}`);
-    } catch (e) {
-      console.log(chalk.red('✖ GAGAL'));
-      console.log(`    ${chalk.red(e.message)}`);
-    }
-  }
-  console.log('');
-}  const lastChar = trimmed[trimmed.length - 1];
-  const lastLine = trimmed.split('\n').pop().trim();
-
-  // Open code block
-  const codeBlocks = (trimmed.match(/```/g) || []).length;
-  if (codeBlocks % 2 !== 0) return true;
-
-  // Hanging syntax
-  if (lastLine.endsWith(',') || lastLine.endsWith('(') || lastLine.endsWith('{')) return true;
-
-  // Trailing "..."
-  if (trimmed.endsWith('...') || trimmed.toLowerCase().endsWith('bersambung') ||
-      trimmed.toLowerCase().endsWith('lanjut') || trimmed.toLowerCase().endsWith('(continues)')) return true;
-
-  return false;
-}
-
-// ─── AI chat with auto-continue ──────────────────────────────────────────────
-
-async function aiChatWithAutoContinue(prompt) {
-  const MAX_CONTINUES = 5;
-  let fullText    = '';
-  let continueCount = 0;
-
-  // Initial call
-  const spinner = createSpinner('Thinking ...');
-  spinner.start();
-  const result = await callAI(prompt);
-  spinner.stop();
-  fullText += result.answer || '';
-  printAIResponse(result);
-  await autoRunCode(result.answer || '');
-
-  // Auto-continue loop
-  while (continueCount < MAX_CONTINUES && isCutOff(fullText)) {
-    continueCount++;
-    log.dim(`\n  ↻ Respons belum selesai, melanjutkan (${continueCount}/${MAX_CONTINUES}) ...`);
-
-    const contPrompt = 'Lanjutkan dari tempat kamu berhenti. Jangan ulangi yang sudah ada.';
-    const spinner2 = createSpinner('Continuing ...');
-    spinner2.start();
-    const contResult = await callAI(contPrompt);
-    spinner2.stop();
-    const cont       = contResult.answer || '';
-
-    if (!cont.trim()) break;
-    fullText += '\n' + cont;
-    printAIResponse(contResult, true);
-  }
-
-  console.log('');
-}
-
-
-// ─── Auto-run code blocks from AI response ───────────────────────────────────
-
+// ─── Code execution helper ───────────────────────────────────────────────────
 
 const EXT_MAP = {
   javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts',
@@ -536,7 +121,6 @@ const EXT_MAP = {
 };
 
 async function autoRunCode(text) {
-  // Extract all fenced code blocks with a language tag
   const RE = /```([a-zA-Z0-9_+-]+)\n([\s\S]*?)```/g;
   let m;
   const blocks = [];
@@ -550,7 +134,6 @@ async function autoRunCode(text) {
 
   console.log('');
 
-  // Write all blocks to temp files first
   const tmpFiles = [];
   for (let i = 0; i < blocks.length; i++) {
     const { ext, code } = blocks[i];
@@ -559,7 +142,7 @@ async function autoRunCode(text) {
     tmpFiles.push(tmpFile);
   }
 
-  // If more than 1 file, auto-zip them too
+  // Zip if multi-file
   if (tmpFiles.length > 1) {
     try {
       const zipName = `kuro_output_${Date.now()}.zip`;
@@ -581,7 +164,6 @@ async function autoRunCode(text) {
     }
   }
 
-  // Run each file
   log.dim(`Ditemukan ${blocks.length} code block — auto-run...`);
   for (let i = 0; i < blocks.length; i++) {
     const { lang } = blocks[i];
@@ -595,29 +177,43 @@ async function autoRunCode(text) {
   }
 }
 
-function printAIResponse(result, isContinuation = false) {
-  const text = result.answer || result.reasoning || '';
-  if (!text) return;
+// ─── AI chat with auto-continue ──────────────────────────────────────────────
 
-  if (!isContinuation) console.log('');
-  const lines = text.split('\n');
-  for (const line of lines) {
-    console.log('  ' + chalk.white(line));
+async function aiChatWithAutoContinue(prompt) {
+  const MAX_CONTINUES = 5;
+  let fullText    = '';
+  let continueCount = 0;
+
+  // Initial call
+  const spinner = createSpinner('Thinking ...');
+  spinner.start();
+  const result = await callAI(prompt);
+  spinner.stop();
+  fullText += result.answer || '';
+  printAIResponse(result);
+  await autoRunCode(result.answer || '');
+
+  // Auto-continue loop
+  while (continueCount < MAX_CONTINUES && isCutOff(fullText)) {
+    continueCount++;
+    log.dim(`\n  ↻ Respons belum selesai, melanjutkan (${continueCount}/${MAX_CONTINUES}) ...`);
+
+    const contPrompt = 'Lanjutkan dari tempat kamu berhenti. Jangan ulangi yang sudah ada.';
+    const spinner2 = createSpinner('Continuing ...');
+    spinner2.start();
+    const contResult = await callAI(contPrompt);
+    spinner2.stop();
+    const cont       = contResult.answer || '';
+
+    if (!cont.trim()) break;
+    fullText += '\n' + cont;
+    printAIResponse(contResult, true);
   }
 
-  if (result.reasoning && result.answer && !isContinuation) {
-    console.log('');
-    log.dim('[thinking hidden — use /clear to reset]');
-  }
-  if (result.citations?.length && !isContinuation) {
-    console.log('');
-    result.citations.slice(0, 3).forEach((c, i) => {
-      log.dim(`[${i + 1}] ${c.title} — ${c.url}`);
-    });
-  }
+  console.log('');
 }
 
-// ─── Command parser ──────────────────────────────────────────────────────────
+// ─── Command handler ─────────────────────────────────────────────────────────
 
 async function handleCommand(input) {
   const trimmed = input.trim();
@@ -653,12 +249,12 @@ async function handleCommand(input) {
       case 'run':     await cmdRun(args);    break;
       case 'debug':   await cmdDebug(args);  break;
       case 'feature': await cmdFeature(trimmed.slice('/feature '.length)); break;
+      case 'save':    saveSession(args || 'default'); break;
+      case 'load':    loadSession(args || 'default'); break;
       case 'test':    await cmdTest(args);   break;
       case 'ml':
         console.log('  ' + chalk.dim('Ketik /ml dulu di prompt utama untuk masuk multiline mode.'));
         break;
-      case 'save':    saveSession(args || 'default'); break;
-      case 'load':    loadSession(args || 'default'); break;
       default:
         log.warn(`Perintah tidak dikenal: /${cmd}  — ketik /help`);
     }
@@ -676,23 +272,22 @@ async function handleCommand(input) {
   }
 }
 
-// ─── REPL ────────────────────────────────────────────────────────────────────
+// ─── REPL with raw stdin (paste detection) ───────────────────────────────────
 
 export async function startREPL() {
   printBanner();
 
   const PROMPT = chalk.dim('  ~/kurocodex ') + chalk.cyan('❯ ') + ' ';
 
-  // ── Raw stdin: auto-detect paste vs single Enter ──────────────────────────
   process.stdin.setRawMode(true);
   process.stdin.setEncoding('utf8');
 
-  let lineBuffer  = '';   // chars typed so far
-  let pasteChunks = [];   // lines collected during a paste burst
-  let pasteTimer  = null; // fires after paste burst ends
+  let lineBuffer  = '';
+  let pasteChunks = [];
+  let pasteTimer  = null;
   let busy        = false;
 
-  const PASTE_FLUSH_MS = 80; // gap after last chunk before we fire
+  const PASTE_FLUSH_MS = 80;
 
   function showPrompt() {
     process.stdout.write('\r' + PROMPT);
@@ -714,7 +309,6 @@ export async function startREPL() {
 
   function flushPaste() {
     pasteTimer = null;
-    // Add whatever is still in lineBuffer as the last line
     if (lineBuffer) {
       pasteChunks.push(lineBuffer);
       lineBuffer = '';
@@ -740,26 +334,21 @@ export async function startREPL() {
       return;
     }
 
-    // If chunk contains newlines it's almost certainly a paste
     const hasNewline = chunk.includes('\n') || chunk.includes('\r');
     const lines = chunk.split(/\r?\n/);
 
     if (lines.length > 1 || (pasteTimer && hasNewline)) {
-      // Paste burst: collect all lines
       if (pasteTimer) clearTimeout(pasteTimer);
 
-      // First segment appends to whatever was in lineBuffer
       lines[0] = lineBuffer + lines[0];
       lineBuffer = '';
 
-      // All but last are complete lines; last may be partial
       const complete = lines.slice(0, -1);
       const tail     = lines[lines.length - 1];
 
       pasteChunks.push(...complete);
       lineBuffer = tail;
 
-      // Echo nicely
       clearLine();
       process.stdout.write(chalk.dim('  [paste] ') + chalk.cyan(String(pasteChunks.length + (tail ? 1 : 0)) + ' baris...'));
 
@@ -767,22 +356,23 @@ export async function startREPL() {
       return;
     }
 
-    // Single char / Enter
+    // Enter
     if (chunk === '\r' || chunk === '\n') {
       process.stdout.write('\n');
       const line = lineBuffer;
-      lineBuffer  = '';
+      lineBuffer = '';
       dispatch(line);
       return;
     }
 
-    // Printable char — echo it
+    // Printable char
     lineBuffer += chunk;
     process.stdout.write(chunk);
   });
 }
 
-// ─── /test command ────────────────────────────────────────────────────────────
+// ─── /test command ───────────────────────────────────────────────────────────
+
 async function cmdTest(providerArg) {
   const { deepseekChat } = await import('./services/deepseek.js');
   const { geminiChat }   = await import('./services/gemini.js');
