@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import { loadConfig, setConfigValue, setApiKey, getApiKey } from '../utils/crypto.js';
 import { log } from '../utils/logger.js';
 
-const PROVIDERS = ['deepseek', 'claude', 'gemini', 'copilot'];
+const PROVIDERS = ['deepseek', 'claude', 'gemini', 'copilot', 'chatgpt'];
 
 export function cmdProvider(name) {
   if (!name) {
