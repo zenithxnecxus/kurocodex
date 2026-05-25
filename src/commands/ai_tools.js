@@ -251,3 +251,168 @@ Selalu jawab lengkap dengan kode penuh. Jangan potong jawaban. Gunakan bahasa In
     log.error(`AI error: ${e.message}`);
   }
 }
+
+// ─── Git helper ───────────────────────────────────────────────────────────────
+
+import { execSync } from 'child_process';
+
+function gitExec(cmd, cwd) {
+  try {
+    return execSync(cmd, { cwd, encoding: 'utf8', stdio: ['pipe','pipe','pipe'] }).trim();
+  } catch (e) {
+    return e.stdout?.trim() || '';
+  }
+}
+
+function getGitRoot(startDir) {
+  try {
+    return execSync('git rev-parse --show-toplevel', {
+      cwd: startDir, encoding: 'utf8', stdio: ['pipe','pipe','pipe']
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+export async function cmdGit(args) {
+  const sub = (args || '').trim();
+  const cwd = process.cwd();
+  const root = getGitRoot(cwd);
+
+  if (!root) {
+    log.error('Bukan git repository. Init dulu: git init');
+    return;
+  }
+
+  // ── /git status ───────────────────────────────────────────────────────────
+  if (!sub || sub === 'status') {
+    const status = gitExec('git status --short', root);
+    const branch = gitExec('git branch --show-current', root);
+    console.log('');
+    console.log(`  ${chalk.cyan('branch')}  ${chalk.bold(branch)}`);
+    if (!status) {
+      log.dim('  Working tree bersih, ga ada perubahan.');
+    } else {
+      console.log('');
+      for (const line of status.split('\n')) {
+        const flag = line.slice(0,2).trim();
+        const file = line.slice(3);
+        const color = flag === 'M' ? chalk.yellow : flag === '?' ? chalk.dim : flag === 'A' ? chalk.green : chalk.red;
+        console.log(`  ${color(flag.padEnd(2))} ${file}`);
+      }
+    }
+    console.log('');
+    return;
+  }
+
+  // ── /git commit ───────────────────────────────────────────────────────────
+  if (sub === 'commit') {
+    const diff = gitExec('git diff --staged', root) || gitExec('git diff', root);
+    const status = gitExec('git status --short', root);
+
+    if (!diff && !status) {
+      log.warn('Ga ada perubahan buat di-commit.');
+      return;
+    }
+
+    if (!diff) {
+      log.warn('Belum ada yang di-stage. Coba: git add . dulu, atau /git add');
+      return;
+    }
+
+    const { callAI } = await import('../index.js');
+    const spinner = (await import('../utils/spinner.js')).createSpinner('Generating commit message...');
+    spinner.start();
+
+    const prompt = `Kamu adalah git expert. Analisis diff ini dan buat commit message yang bagus.
+
+Format WAJIB (conventional commits):
+<type>(<scope>): <deskripsi singkat>
+
+[body opsional — jelaskan kenapa bukan apa]
+
+Types: feat, fix, refactor, style, docs, test, chore
+
+Diff:
+${diff.slice(0, 3000)}
+
+Balas HANYA dengan commit message, tanpa penjelasan tambahan.`;
+
+    const result = await callAI(prompt);
+    spinner.stop();
+
+    const msg = result.answer?.trim();
+    if (!msg) { log.error('Gagal generate commit message.'); return; }
+
+    console.log('');
+    console.log(chalk.dim('  ┌─ Commit message:'));
+    for (const line of msg.split('\n')) {
+      console.log(`  ${chalk.dim('│')} ${chalk.white(line)}`);
+    }
+    console.log(chalk.dim('  └─'));
+    console.log('');
+
+    // Ask confirmation
+    const readline = await import('readline');
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await new Promise(r => rl.question(
+      `  ${chalk.cyan('?')} Pakai message ini? ${chalk.dim('[y/n/e(dit)]')} `, r
+    ));
+    rl.close();
+
+    if (answer.toLowerCase() === 'n') { log.dim('Dibatalkan.'); return; }
+
+    let finalMsg = msg;
+    if (answer.toLowerCase() === 'e') {
+      const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
+      finalMsg = await new Promise(r => rl2.question('  Edit: ', r));
+      rl2.close();
+    }
+
+    try {
+      // Stage all if nothing staged
+      const staged = gitExec('git diff --staged --name-only', root);
+      if (!staged) gitExec('git add -A', root);
+
+      execSync(`git commit -m ${JSON.stringify(finalMsg)}`, { cwd: root, stdio: 'inherit' });
+      log.success('Commit berhasil!');
+    } catch (e) {
+      log.error(`Commit gagal: ${e.message}`);
+    }
+    return;
+  }
+
+  // ── /git add ──────────────────────────────────────────────────────────────
+  if (sub === 'add') {
+    gitExec('git add -A', root);
+    log.success('Semua perubahan di-stage.');
+    return;
+  }
+
+  // ── /git push ─────────────────────────────────────────────────────────────
+  if (sub === 'push') {
+    log.dim('Pushing...');
+    try {
+      execSync('git push', { cwd: root, stdio: 'inherit' });
+      log.success('Push berhasil!');
+    } catch (e) {
+      log.error(`Push gagal: ${e.message}`);
+    }
+    return;
+  }
+
+  // ── /git log ──────────────────────────────────────────────────────────────
+  if (sub === 'log') {
+    const logOut = gitExec('git log --oneline -10', root);
+    console.log('');
+    for (const line of logOut.split('\n')) {
+      const [hash, ...rest] = line.split(' ');
+      console.log(`  ${chalk.yellow(hash)} ${rest.join(' ')}`);
+    }
+    console.log('');
+    return;
+  }
+
+  log.warn(`Subcommand ga dikenali: ${sub}`);
+  log.dim('Tersedia: /git, /git status, /git add, /git commit, /git push, /git log');
+}
