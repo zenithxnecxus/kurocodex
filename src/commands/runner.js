@@ -201,7 +201,8 @@ async function runFile(filePath) {
     return;
   }
 
-  log.info(`Menjalankan ${chalk.cyan(path.basename(filePath))} (${ext}) ...`);
+  const isTmp = filePath.includes('kuro_auto_');
+  if (!isTmp) log.info(`Menjalankan ${chalk.cyan(path.basename(filePath))} (${ext}) ...`);
   console.log(chalk.gray('  ' + '─'.repeat(60)));
 
   if (lang.shell) {
